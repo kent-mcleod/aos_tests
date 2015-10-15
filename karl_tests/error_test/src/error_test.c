@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <stdint.h>
 #include <sys/time.h>
 #include <utils/time.h>
 
@@ -56,6 +57,9 @@ void file_errors() {
     fd = sos_sys_open((char *)1000, O_RDONLY);
     assert(fd == -1);
 
+    fd = sos_sys_open((char *)~0, O_RDWR);
+    assert(fd == -1);
+
     fd = sos_sys_open("a_new_file.txt", O_RDWR);
     assert(fd != -1);
     assert(sos_sys_close(fd) == 0);
@@ -76,10 +80,12 @@ void file_errors() {
     assert(sos_sys_write(-34234324, buff, 1000) == -1);
     assert(sos_sys_write(1000, buff, 3 * PAGE_SIZE) == -1);
     assert(sos_sys_write(454355455, buff, 234) == -1);
+    assert(sos_sys_write(~0, buff, 234) == -1);
     assert(sos_sys_read(-1, buff, 1) == -1);
     assert(sos_sys_read(-34234324, buff, 1000) == -1);
     assert(sos_sys_read(1000, buff, 3 * PAGE_SIZE) == -1);
     assert(sos_sys_read(454355455, buff, 234) == -1);
+    assert(sos_sys_read(~0, buff, 234) == -1);
 
     fd = sos_sys_open("a_new_file.txt", O_WRONLY);
     assert(fd != -1);
@@ -130,6 +136,7 @@ void file_errors() {
     assert(sos_stat("non_existant_file.wmv", &stat) == -1);
     assert(sos_stat(NULL, &stat) == -1);
     assert(sos_stat((void *)1000, &stat) == -1);
+    assert(sos_stat((void *)~0, &stat) == -1);
     assert(sos_stat("a_new_file.txt", NULL) == -1);
     assert(sos_stat("a_new_file.txt", (void *)~0) == -1);
     assert(sos_stat("a_new_file.txt", (void *)1000) == -1);
@@ -161,7 +168,135 @@ void file_errors() {
     assert(sos_sys_close(fd) == 0);
 }
 
+void memory_errors() {
+    int dummy_var;
+    void *heap_end = sbrk(0);
+
+    /* This is implementation defined. Your stack may be before your heap. */
+    assert(heap_end < (void *)&dummy_var);
+    assert(sbrk((void *)&dummy_var - heap_end) == -1);
+    assert(sbrk(0) == heap_end);
+
+    assert(sbrk(~0) == -1);
+    /* We haven't called malloc yet so this should fail. */
+    assert(sbrk(-1) == -1);
+    assert(sbrk(0) == heap_end);
+
+    assert(sbrk(INT_MAX) == -1);
+    assert(sbrk(INT_MIN) == -1);
+    assert(sbrk(1 << 31) == -1);
+    assert(sbrk(0) == heap_end);
+
+    uint32_t i = 0;
+    int inc = (1 << 30);
+    while (inc != 0) {
+        while (sbrk(inc) != -1) {
+            i++;
+        }
+        inc >>= 1;
+    }
+
+    assert(sbrk(INT_MIN) == -1);
+
+    inc = (1 << 30);
+    while (inc != 0) {
+        while (sbrk(-inc) != -1) {
+            i--;
+        }
+        inc >>= 1;
+    }
+
+    assert(i == 0);
+    assert(sbrk(0) == heap_end);
+
+    /* We increment by a non page sized value. */
+    assert(sbrk(32) == -1);
+
+    // TODO(karl): write mmap tests.
+}
+
+void process_errors() {
+    char path[2 * MAX_PATH_LENGTH];
+    for (int i = 0; i < 2 * MAX_PATH_LENGTH; i++) {
+        path[i] = 'a';
+    }
+
+    assert(sos_process_create(NULL) == -1);
+    assert(sos_process_create((char *)1000) == -1);
+    assert(sos_process_create((char *)~0) == -1);
+    assert(sos_process_create("") == -1);
+    assert(sos_process_create("non_existant_process") == -1);
+    assert(sos_process_create(path) == -1);
+    path[MAX_PATH_LENGTH] = '\0';
+    assert(sos_process_create(path) == -1);
+
+    assert(sos_process_delete(-1) == -1);
+    assert(sos_process_delete(INT_MIN) == -1);
+    assert(sos_process_delete(INT_MAX) == -1);
+    assert(sos_process_delete(sos_my_id() + 1) == -1);
+
+    sos_process_t process_buff[100];
+    /* Not an error but a corner case. */
+    assert(sos_process_status(process_buff, 0) == 0);
+    assert(sos_process_status(process_buff, 100) == 1);
+    assert(sos_process_status(NULL, 100) == 0);
+    assert(sos_process_status((void *)1000, 100) == 0);
+    assert(sos_process_status((void *)~0, 100) == 0);
+    assert(sos_process_status(sbrk(0), 1) == 0);
+    assert(sos_process_status((void *)"read only string", 1) == 0);
+
+    assert(sos_process_wait(sos_my_id() + 1) == -1);
+    assert(sos_process_wait(INT_MIN) == -1);
+    assert(sos_process_wait(INT_MAX) == -1);
+    /* Implementation defined this might be allowed behaviour. */
+    assert(sos_process_wait(sos_my_id()) == -1);
+
+    pid_t pid = sos_process_create("error_test");
+    assert(pid != -1);
+    assert(sos_process_wait(pid) == pid);
+    assert(sos_process_wait(pid) == -1);
+
+    pid = sos_process_create("error_test");
+    assert(pid != -1);
+    assert(sos_process_delete(pid) == 0);
+    assert(sos_process_delete(pid) == -1);
+
+    pid = sos_process_create("error_test");
+    assert(pid != -1);
+    assert(sos_process_delete(pid) == 0);
+    assert(sos_process_wait(pid) == -1);
+
+    pid = sos_process_create("error_test");
+    assert(pid != -1);
+    assert(sos_process_wait(pid) == pid);
+    assert(sos_process_delete(pid) == -1);
+
+    pid = sos_process_create("error_test");
+    assert(pid != -1);
+    sos_sys_usleep(10000);
+    assert(sos_process_create("error_test") != pid);
+    assert(sos_process_wait(pid) == pid);
+}
+
+void crash_errors() {
+    //printf("%c\n", *((char *)NULL));
+    //*((char *)NULL) = 2;
+    //*"Read only string" = 13;
+    printf("%c\n", *((char *)sbrk(0)));
+    //*((char *)sbrk(0)) = 2;
+}
+
 int main() {
+    /* Implementation defined. Set this to your initial id. */
+    if (sos_my_id() != 0) {
+        printf("I am a child with pid: %d.\n", sos_my_id());
+        /* Try to delete our parent. Once again this is implementation defined.*/
+        assert(sos_process_delete(sos_my_id() - 1) == -1);
+        assert(sos_process_wait(sos_my_id() - 1) == -1);
+        printf("Child test exited successfully.\n");
+        return 0;
+    }
+
     printf("Running timer error tests.\n");
     timer_errors();
     printf("Timer error tests passed.\n");
@@ -169,5 +304,22 @@ int main() {
     printf("Running file error tests.\n");
     file_errors();
     printf("File error tests passed.\n");
+
+    printf("Running memory error tests.\n");
+    printf("Warning: Here be implementation specific dragons.\n");
+    memory_errors();
+    printf("Memory error tests passed.\n");
+
+    printf("Running process error tests.\n");
+    process_errors();
+    printf("Process error tests passed.\n");
+
+    // TODO(karl): Write share vm tests.
+
+    printf("Running crash tests. You need to manually comment out individual lines.\n");
+    crash_errors();
+    assert(!"Crash tests failed you should never get here!\n");
+
+    return 0;
 }
 

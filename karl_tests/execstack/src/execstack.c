@@ -39,7 +39,7 @@ int main(void) {
     int stack_addr = 4;
 
     int (*functionPtr)(int,int);
-    functionPtr = (int*(int,int)) &stack_addr;
+    functionPtr =  &stack_addr;
     int sum = (*functionPtr)(1,1);
 
     printf("\n[New process]\n");

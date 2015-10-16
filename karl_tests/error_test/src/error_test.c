@@ -30,7 +30,7 @@ void timer_errors() {
     sos_sys_usleep(-1);
     sos_sys_usleep(-234324);
     sos_sys_usleep(INT_MIN);
-    assert(t1 - sos_sys_time_stamp() < 3000000);
+    assert(sos_sys_time_stamp() - t1 < 3000000);
 }
 
 void file_errors() {
